@@ -1,0 +1,4 @@
+streamlit
+google-genai
+fpdf2
+pillow
