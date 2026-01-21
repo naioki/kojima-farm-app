@@ -3,12 +3,19 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 from fpdf import FPDF
 from google import genai
 from collections import defaultdict
 import io
 from typing import List, Dict, Any, Optional
+
+# Optional OCR (pytesseract). If unavailable, code will fall back to AI.
+try:
+    import pytesseract
+    TESSERACT_AVAILABLE = True
+except Exception:
+    TESSERACT_AVAILABLE = False
 
 # 1. 初期設定
 st.set_page_config(page_title="配送管理システム", layout="centered")
@@ -26,7 +33,8 @@ def safe_int(v: Any) -> int:
     if isinstance(v, int):
         return v
     try:
-        s = re.sub(r'[^\d\-]', '', str(v))
+        # Keep digits and minus only
+        s = re.sub(r'[^-]', '', str(v))
         return int(s) if s else 0
     except Exception:
         return 0
@@ -50,14 +58,14 @@ def normalize_item_name(raw: str) -> str:
     if re.search(r'青梗菜|チンゲン菜|ちんげん菜', s):
         return "青梗菜"
     # きゅうり関連（漢字・ひらがな・カナ）
-    if re.search(r'胡瓜|きゅうり|キュウリ|キュウリ', s):
+    if re.search(r'胡瓜|きゅうり|キュウリ', s):
         # バラ（ばら）判定
-        if re.search(r'バラ|ばら|バラ\)|バラ\(|バラ$', s):
+        if re.search(r'バラ|ばら', s):
             return "胡瓜(バラ)"
         # 3本パック判定
         if re.search(r'3本|3本P|3本パック', s):
             return "胡瓜(3本P)"
-        # default: if contains 'バラ' anywhere
+        # default: バラ扱い
         return "胡瓜(バラ)"
     # 長ネギ
     if re.search(r'長ネギ|長ねぎ|ねぎ', s) and re.search(r'2本', s):
@@ -94,10 +102,8 @@ def compute_boxes_and_remainder(total_qty: int, item_name: str) -> Dict[str, int
     # 胡瓜(バラ) の特殊処理: 端数が 50 以上なら 50本箱を1つ使う（fifty_box=1）し、残りを remainder に残す
     if item_name == "胡瓜(バラ)":
         if remainder >= 50:
-            # 50本箱を1つ追加
             result["fifty_box"] = 1
             remainder = remainder - 50
-            # もし remainder が負になれば 0 にする
             remainder = max(remainder, 0)
     result["boxes"] = boxes
     result["remainder"] = remainder
@@ -113,17 +119,14 @@ def postprocess_ai_results(raw_entries: List[Dict[str, Any]]) -> List[Dict[str, 
     processed = []
     for e in raw_entries:
         entry = {k: v for k, v in e.items()}
-        # 正規化
         entry['item'] = normalize_item_name(entry.get('item', '') or entry.get('品目', '') or '')
         entry['store'] = entry.get('store', '') or entry.get('店舗', '')
         entry['spec'] = entry.get('spec', '') or entry.get('規格', '')
 
-        # 欠損チェック：unit, boxes, remainder
         u = safe_int(entry.get('unit', None))
         b = safe_int(entry.get('boxes', None))
         r = safe_int(entry.get('remainder', None))
 
-        # もし total や count が与えられていたらそれを使う
         total_candidate = None
         if 'total' in entry:
             total_candidate = safe_int(entry.get('total'))
@@ -133,7 +136,6 @@ def postprocess_ai_results(raw_entries: List[Dict[str, Any]]) -> List[Dict[str, 
             total_candidate = safe_int(entry.get('数量'))
 
         if (u == 0 or b == 0) and total_candidate is not None:
-            # 算出する
             comp = compute_boxes_and_remainder(total_candidate, entry['item'])
             entry['unit'] = comp['unit']
             entry['boxes'] = comp['boxes']
@@ -141,12 +143,10 @@ def postprocess_ai_results(raw_entries: List[Dict[str, Any]]) -> List[Dict[str, 
             if comp.get('fifty_box'):
                 entry['fifty_box'] = comp['fifty_box']
         else:
-            # もし unit/boxes/remainder のどれかが埋まっていれば安全に数値化して補う
             entry['unit'] = u
             entry['boxes'] = b
             entry['remainder'] = r
 
-            # もし unit が 0 で total_candidate があるなら unit ルールから補完
             if entry['unit'] == 0 and total_candidate is not None:
                 comp = compute_boxes_and_remainder(total_candidate, entry['item'])
                 entry['unit'] = comp['unit']
@@ -157,6 +157,94 @@ def postprocess_ai_results(raw_entries: List[Dict[str, Any]]) -> List[Dict[str, 
 
         processed.append(entry)
     return processed
+
+# OCR-based parsing for email screenshots / text-heavy images
+_ITEM_KEYWORDS = ['胡瓜', 'きゅうり', 'キュウリ', '春菊', '青梗菜', 'チンゲン菜', 'ちんげん菜', 'バラ', 'ネギ', 'ねぎ']
+
+def _line_contains_item(line: str) -> bool:
+    return any(k in line for k in _ITEM_KEYWORDS)
+
+def ocr_parse_image(img: Image.Image) -> List[Dict[str, Any]]:
+    """画像から OCR して、メール形式の発注をパースしてエントリ一覧を返す。
+    戻り値の各エントリは {'store':..., 'item':..., 'total':...} の形を想定。
+    空リストは OCR で意味あるデータが取れなかったことを示す。
+    """
+    if not TESSERACT_AVAILABLE:
+        return []
+
+    try:
+        # 前処理: グレースケール化・コントラスト調整
+        img_cv = img.convert('L')
+        img_cv = ImageOps.invert(img_cv)
+        img_cv = img_cv.point(lambda x: 0 if x < 128 else 255, '1')
+        text = pytesseract.image_to_string(img_cv, lang='jpn')
+    except Exception:
+        try:
+            text = pytesseract.image_to_string(img, lang='jpn')
+        except Exception:
+            return []
+
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return []
+
+    entries: List[Dict[str, Any]] = []
+    current_store = None
+
+    # パターン1: item + unit × count (例: 胡瓜バラ50×4 -> unit=50 count=4)
+    p_unit_mul = re.compile(r'(?P<item>[^×xX✕]+?)(?P<unit>\d+)[×xX✕](?P<count>\d+)$')
+    # パターン2: item × number (例: 春菊×20, 胡瓜3本×120)
+    p_item_num = re.compile(r'(?P<item>[^×xX✕]+?)[×xX✕](?P<number>\d+)$')
+
+    for line in lines:
+        # 行に店舗名と項目が同居する場合 (例: 青葉台 胡瓜バラ50×4)
+        m_combined = re.match(r'^(?P<store>\S{1,10})\s+(?P<rest>.+)$', line)
+        if m_combined and _line_contains_item(m_combined.group('rest')):
+            current_store = m_combined.group('store')
+            rest = m_combined.group('rest')
+            # parse rest as item line(s)
+            candidate_lines = [rest]
+        else:
+            # 店舗名だけの行か、項目の行
+            if not _line_contains_item(line):
+                # 店舗名の可能性が高い
+                current_store = line
+                continue
+            candidate_lines = [line]
+
+        for cl in candidate_lines:
+            cl = cl.replace(' ', '')
+            # try unit*count pattern
+            m1 = p_unit_mul.search(cl)
+            if m1:
+                item_raw = m1.group('item')
+                unit = safe_int(m1.group('unit'))
+                count = safe_int(m1.group('count'))
+                total = unit * count
+                item_name = normalize_item_name(item_raw)
+                entries.append({'store': current_store or '', 'item': item_name, 'total': total})
+                continue
+            m2 = p_item_num.search(cl)
+            if m2:
+                item_raw = m2.group('item')
+                number = safe_int(m2.group('number'))
+                item_name = normalize_item_name(item_raw)
+                # 仮に item_raw 内に数字（例: 3本）が含まれていれば、number は "個数(パック数)" と扱う
+                if re.search(r'\d+本', item_raw):
+                    total = number
+                else:
+                    # 春菊×20 等は total=number
+                    total = number
+                entries.append({'store': current_store or '', 'item': item_name, 'total': total})
+                continue
+            # 最後の手段: 行中の数字を拾って total とする
+            nums = re.findall(r'\d+', cl)
+            if nums:
+                total = safe_int(nums[-1])
+                item_name = normalize_item_name(re.sub(r'\d+', '', cl))
+                entries.append({'store': current_store or '', 'item': item_name, 'total': total})
+
+    return entries
 
 # 2. AI画像解析（Gemini 2.0 Flash）
 def get_order_data(image: Image.Image) -> Optional[List[Dict[str, Any]]]:
@@ -179,20 +267,18 @@ def get_order_data(image: Image.Image) -> Optional[List[Dict[str, Any]]]:
 ]
 """
     try:
-        # Gemini API: prompt と image を contents に含める（既存の実装にならう）
         response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt, image])
-        text = response.text or ""
+        text = getattr(response, 'text', '') or ''
         # AI が ```json で返す場合に対応
-        if "```json" in text:
+        if '```json' in text:
             try:
-                text = text.split("```json")[1].split("```[0]")[0]
+                text = text.split('```json', 1)[1].split('```', 1)[0]
             except Exception:
                 pass
         # 最終的に JSON パース
         parsed = json.loads(text.strip())
         if isinstance(parsed, list):
             return parsed
-        # もし dict の場合それを list に包む
         if isinstance(parsed, dict):
             return [parsed]
         st.error("AIの応答が期待形式(list/dict)ではありません。")
@@ -208,10 +294,8 @@ def create_b5_pdf(data: List[Dict[str, Any]]) -> bytes:
     store, item, spec, unit, boxes, remainder, optional fifty_box
     戻り値: PDF の bytes
     """
-    # B5サイズ (182mm x 257mm)
     pdf = FPDF(orientation='P', unit='mm', format=(182, 257))
 
-    # フォント登録（ipaexg.ttfが実行ディレクトリに必要）
     if os.path.exists('ipaexg.ttf'):
         try:
             pdf.add_font('Gothic', fname='ipaexg.ttf', uni=True)
@@ -220,19 +304,16 @@ def create_b5_pdf(data: List[Dict[str, Any]]) -> bytes:
         except Exception:
             font_name = 'Arial'
     else:
-        font_name = 'Arial'  # フォントがない場合の予備
+        font_name = 'Arial'
 
-    # 日付計算
     tomorrow = datetime.now() + timedelta(days=1)
     tomorrow_pdf_str = tomorrow.strftime('%m 月 %d 日')
     tomorrow_list_str = tomorrow.strftime('%m/%d')
 
-    # --- 1ページ目：全体一覧表 ---
     pdf.add_page()
     pdf.set_font(font_name, style='B', size=20)
     pdf.cell(0, 15, f"【出荷一覧表】 {tomorrow_list_str}", ln=True, align='C')
 
-    # テーブルヘッダー
     pdf.set_font(font_name, style='B', size=12)
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(55, 12, " 店舗名", border=1, fill=True)
@@ -240,7 +321,6 @@ def create_b5_pdf(data: List[Dict[str, Any]]) -> bytes:
     pdf.cell(25, 12, " フル箱", border=1, fill=True, align='C')
     pdf.cell(25, 12, " 端数箱", border=1, fill=True, align='C', ln=True)
 
-    # テーブル内容
     pdf.set_font(font_name, style='', size=12)
     for entry in data:
         r_val = safe_int(entry.get('remainder', 0))
@@ -250,7 +330,6 @@ def create_b5_pdf(data: List[Dict[str, Any]]) -> bytes:
         pdf.cell(25, 12, f" {safe_int(entry.get('boxes',0))}", border=1, align='C')
         pdf.cell(25, 12, f" {rem_box}", border=1, align='C', ln=True)
 
-    # --- 個別伝票 ---
     for entry in data:
         pdf.add_page()
         pdf.set_auto_page_break(auto=False)
@@ -262,23 +341,18 @@ def create_b5_pdf(data: List[Dict[str, Any]]) -> bytes:
 
         col1, col2, h = 45, 122, 30
 
-        # 行先
         pdf.set_font(font_name, style='B', size=18); pdf.cell(col1, h, " 行先", border=1)
         pdf.set_font(font_name, style='B', size=36); pdf.cell(col2, h, f" {entry.get('store','')}", border=1, ln=True)
 
-        # 商品名
         pdf.set_font(font_name, style='B', size=18); pdf.cell(col1, h, " 商品名", border=1)
         pdf.set_font(font_name, style='B', size=32); pdf.cell(col2, h, f" {entry.get('item','')}", border=1, ln=True)
 
-        # 出荷日
         pdf.set_font(font_name, style='B', size=18); pdf.cell(col1, h, " 出荷日", border=1)
         pdf.set_font(font_name, style='B', size=26); pdf.cell(col2, h, f" {tomorrow_pdf_str}", border=1, ln=True)
 
-        # 規格
         pdf.set_font(font_name, style='B', size=18); pdf.cell(col1, h, " 規格", border=1)
         pdf.set_font(font_name, style='B', size=26); pdf.cell(col2, h, f" {entry.get('spec', '')}", border=1, ln=True)
 
-        # 入数・箱数
         u_val = safe_int(entry.get('unit',0))
         b_val = safe_int(entry.get('boxes',0))
         r_val = safe_int(entry.get('remainder',0))
@@ -287,12 +361,9 @@ def create_b5_pdf(data: List[Dict[str, Any]]) -> bytes:
         pdf.set_font(font_name, style='B', size=24); pdf.cell(col2/2, h, f" {u_val if u_val>0 else ''}", border=1)
         pdf.cell(col2/2, h, f" {b_val} ケース", border=1, ln=True)
 
-        # 端数
         pdf.set_font(font_name, style='B', size=18); pdf.cell(col1, h, " 端数", border=1)
         pdf.set_font(font_name, style='B', size=24)
-        # 胡瓜(バラ) の 50本箱表現がある場合、それを優先表示する
         if entry.get('fifty_box', 0):
-            # 例: "50本箱1" と表示して、その後に残り端数を表示
             display_rem = f"{r_val if r_val>0 else ''}"
             pdf.cell(col2/2, h, f" {display_rem}", border=1)
             pdf.cell(col2/2, h, f" 50本箱1", border=1, ln=True)
@@ -301,22 +372,19 @@ def create_b5_pdf(data: List[Dict[str, Any]]) -> bytes:
             rem_box = 1 if r_val > 0 else 0
             pdf.cell(col2/2, h, f" {rem_box} ケース", border=1, ln=True)
 
-        # TOTAL
         pdf.set_font(font_name, style='B', size=20); pdf.cell(col1, h, " TOTAL 数", border=1)
         pdf.set_font(font_name, style='B', size=42)
         total_qty = (u_val * b_val) + r_val + (50 if entry.get('fifty_box', 0) else 0)
         pdf.cell(col2, h, f" {total_qty}", border=1, ln=True)
 
-    # PDF を bytes で返す
     pdf_bytes = pdf.output(dest='S').encode('latin-1')
     return pdf_bytes
 
 # 4. メイン画面レイアウト
-st.title("📦 配送伝票作成システム (改良版)")
+st.title("📦 配送伝票作成システム (改良版 + OCR)")
 uploaded_files = st.file_uploader("注文画像をアップロード（複数可）", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
 
 if uploaded_files:
-    # プレビューを横並びで表示（1枚ずつ）
     st.subheader("アップロード画像")
     for idx, f in enumerate(uploaded_files):
         try:
@@ -327,14 +395,23 @@ if uploaded_files:
 
     if st.button("配送伝票を生成"):
         all_raw = []
-        with st.spinner('AIが解析中（複数画像）...'):
-            # 画像ごとに解析して結果をマージ
+        with st.spinner('画像を解析中...（OCR→AI）'):
             for f in uploaded_files:
                 try:
                     img = Image.open(f)
                 except Exception as ex:
                     st.error(f"画像読み込み失敗: {ex}")
                     continue
+
+                # 1) まずOCRでメール形式の発注をパース
+                ocr_entries = ocr_parse_image(img)
+                if ocr_entries:
+                    # Convert OCR entries to the same shape expected by postprocess
+                    for oe in ocr_entries:
+                        all_raw.append({'store': oe.get('store',''), 'item': oe.get('item',''), 'total': oe.get('total',0)})
+                    continue
+
+                # 2) OCRで取れなければAIにフォールバック
                 ai_res = get_order_data(img)
                 if ai_res:
                     all_raw.extend(ai_res)
@@ -344,14 +421,11 @@ if uploaded_files:
             if not all_raw:
                 st.error("どの画像からも注文データを取得できませんでした。")
             else:
-                # 後処理（正規化・欠損補完）
                 processed = postprocess_ai_results(all_raw)
 
-                # PDF作成
                 pdf_bytes = create_b5_pdf(processed)
                 st.success("伝票が完成しました！")
 
-                # LINE用集計の表示
                 st.subheader("📋 LINE用集計（コピー用）")
                 summary_packs = defaultdict(int)
                 for entry in processed:
@@ -366,7 +440,6 @@ if uploaded_files:
                 st.code(line_text, language="text")
                 st.write("↑ タップしてコピーし、LINEに貼り付けてください。")
 
-                # ダウンロードボタン
                 st.download_button(
                     label="📥 PDFをダウンロード (一覧表付き)",
                     data=pdf_bytes,
