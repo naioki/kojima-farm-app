@@ -172,4 +172,4 @@ if uploaded_file:
                     label="📥 PDFをダウンロード (一覧表付き)",
                     data=bytes(pdf_bytes),
                     file_name=f"label_{datetime.now().strftime('%m%d%H%M')}.pdf",
-                    mime="application/pdf"
+                    mime="application/pdf")
