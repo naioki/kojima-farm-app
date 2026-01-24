@@ -131,19 +131,24 @@ def get_order_data_from_text(text, max_retries=3):
 - 青梗菜: 20袋/箱 → unit=20
 - 長ネギ(2本P): 30本/箱 → unit=30
 
-【重要：総数（パック数）の表記について】
-- 「x180」「×180」「180パック」などの表記は「総数（パック数）180」を意味します
+【最重要：総数（パック数）の表記について】
+- 「×数字」の表記（例：「×180」「×100」「×50」）は「総数（パック数）」を意味します
+- 「×数字」は「箱数」ではなく「総数」です！絶対に間違えないでください！
 - この場合、unit（1箱あたりの入数）とboxes（箱数）を逆算してください
-- 例：「胡瓜3本 x180」→ 総数180パック = unit=30の場合、boxes=6, remainder=0 (30×6=180)
-- 例：「春菊 x50」→ 総数50パック = unit=30の場合、boxes=1, remainder=20 (30×1+20=50)
-- 総数がunitで割り切れる場合：boxes=総数÷unit, remainder=0
-- 総数がunitで割り切れない場合：boxes=総数÷unit（切り捨て）, remainder=総数-(unit×boxes)
+- 計算式：総数 = unit × boxes + remainder
+- 総数がunitで割り切れる場合：boxes = 総数 ÷ unit, remainder = 0
+- 総数がunitで割り切れない場合：boxes = 総数 ÷ unit（切り捨て）, remainder = 総数 - (unit × boxes)
 
-【数量計算の例】
-- 「胡瓜3本×100」→ unit=30, boxes=3, remainder=10 (30本/箱 × 3箱 + 10本 = 100本)
-- 「胡瓜3本 x180」→ unit=30, boxes=6, remainder=0 (30本/箱 × 6箱 = 180本)
-- 「胡瓜バラ100×7 / 50×1」→ unit=100, boxes=7, remainder=50 (100本/箱 × 7箱 + 50本 = 750本)
-- 「春菊×50」→ unit=30, boxes=1, remainder=20 (30袋/箱 × 1箱 + 20袋 = 50袋)
+【数量計算の例（重要：×数字は総数を意味する）】
+- 「胡瓜3本×180」→ 総数180パック = unit=30の場合、boxes=6, remainder=0 (180÷30=6箱)
+- 「胡瓜3本×100」→ 総数100パック = unit=30の場合、boxes=3, remainder=10 (100÷30=3箱余り10)
+- 「胡瓜3本×60」→ 総数60パック = unit=30の場合、boxes=2, remainder=0 (60÷30=2箱)
+- 「胡瓜3本×30」→ 総数30パック = unit=30の場合、boxes=1, remainder=0 (30÷30=1箱)
+- 「胡瓜3本×20」→ 総数20パック = unit=30の場合、boxes=0, remainder=20 (20<30なので端数のみ)
+- 「春菊×50」→ 総数50パック = unit=30の場合、boxes=1, remainder=20 (50÷30=1箱余り20)
+- 「ネギ2本×80」→ 総数80パック = unit=30の場合、boxes=2, remainder=20 (80÷30=2箱余り20)
+- 「ネギ2本×40」→ 総数40パック = unit=30の場合、boxes=1, remainder=10 (40÷30=1箱余り10)
+- 「胡瓜バラ100×7 / 50×1」→ これは特殊な表記：100本/箱×7箱 + 端数50本 = unit=100, boxes=7, remainder=50
 
 【出力JSON形式】
 [{{"store":"店舗名","item":"品目名","spec":"規格","unit":数字,"boxes":数字,"remainder":数字}}]
@@ -219,10 +224,24 @@ def get_order_data_from_image(image, max_retries=3):
 - 青梗菜: 20袋/箱 → unit=20
 - 長ネギ(2本P): 30本/箱 → unit=30
 
-【数量計算の例】
-- 「胡瓜3本×100」→ unit=30, boxes=10, remainder=0 (30本/箱 × 10箱 = 300本 = 3本×100)
-- 「胡瓜バラ100×7 / 50×1」→ unit=100, boxes=7, remainder=50 (100本/箱 × 7箱 + 50本 = 750本)
-- 「春菊×50」→ unit=30, boxes=1, remainder=20 (30袋/箱 × 1箱 + 20袋 = 50袋)
+【最重要：総数（パック数）の表記について】
+- 「×数字」の表記（例：「×180」「×100」「×50」）は「総数（パック数）」を意味します
+- 「×数字」は「箱数」ではなく「総数」です！絶対に間違えないでください！
+- この場合、unit（1箱あたりの入数）とboxes（箱数）を逆算してください
+- 計算式：総数 = unit × boxes + remainder
+- 総数がunitで割り切れる場合：boxes = 総数 ÷ unit, remainder = 0
+- 総数がunitで割り切れない場合：boxes = 総数 ÷ unit（切り捨て）, remainder = 総数 - (unit × boxes)
+
+【数量計算の例（重要：×数字は総数を意味する）】
+- 「胡瓜3本×180」→ 総数180パック = unit=30の場合、boxes=6, remainder=0 (180÷30=6箱)
+- 「胡瓜3本×100」→ 総数100パック = unit=30の場合、boxes=3, remainder=10 (100÷30=3箱余り10)
+- 「胡瓜3本×60」→ 総数60パック = unit=30の場合、boxes=2, remainder=0 (60÷30=2箱)
+- 「胡瓜3本×30」→ 総数30パック = unit=30の場合、boxes=1, remainder=0 (30÷30=1箱)
+- 「胡瓜3本×20」→ 総数20パック = unit=30の場合、boxes=0, remainder=20 (20<30なので端数のみ)
+- 「春菊×50」→ 総数50パック = unit=30の場合、boxes=1, remainder=20 (50÷30=1箱余り20)
+- 「ネギ2本×80」→ 総数80パック = unit=30の場合、boxes=2, remainder=20 (80÷30=2箱余り20)
+- 「ネギ2本×40」→ 総数40パック = unit=30の場合、boxes=1, remainder=10 (40÷30=1箱余り10)
+- 「胡瓜バラ100×7 / 50×1」→ これは特殊な表記：100本/箱×7箱 + 端数50本 = unit=100, boxes=7, remainder=50
 
 【出力JSON形式】
 [{{"store":"店舗名","item":"品目名","spec":"規格","unit":数字,"boxes":数字,"remainder":数字}}]
@@ -350,9 +369,22 @@ def validate_and_fix_order_data(order_data, auto_learn=True):
         # 計算の整合性チェック（unitが0でない場合のみ）
         if unit > 0:
             calculated_total = (unit * boxes) + remainder
+            
             # もしboxesとremainderが0で、unitだけが設定されている場合は警告
             if boxes == 0 and remainder == 0 and unit > 0:
                 errors.append(f"行{i+1}: unitは設定されていますが、boxesとremainderが0です（店舗: {store}, 品目: {item}）")
+            
+            # 計算結果が不自然に大きい場合の警告（例：unit=30, boxes=18, remainder=0 → 540）
+            # これは「×180」を「18箱」と誤解釈した可能性があるが、確実ではないので警告のみ
+            if calculated_total > 0 and calculated_total % unit == 0 and remainder == 0:
+                # calculated_total ÷ unit が boxes と一致する場合、これは正常
+                # しかし、もし calculated_total ÷ unit が boxes より小さい場合、誤解釈の可能性
+                expected_boxes = calculated_total // unit
+                if expected_boxes != boxes and boxes > expected_boxes:
+                    # 例：calculated_total=540, unit=30 → expected_boxes=18, boxes=18 → 正常
+                    # しかし、もし calculated_total=540, unit=30, boxes=18 で、元のテキストが「×180」なら
+                    # expected_boxes=6であるべきだが、これは検出できない
+                    pass  # 元のテキストがないので、確実な修正は難しい
         
         # 検証済みデータを追加
         spec_value = entry.get('spec', '')
