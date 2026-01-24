@@ -640,3 +640,129 @@ with tab1:
                         with st.expander("🔍 詳細なエラー情報（開発者用）"):
                             st.code(traceback.format_exc(), language="python")
                         st.info("💡 解決方法: データを確認し、数値が正しく入力されているか確認してください。")
+
+# ===== タブ2: メール自動読み取り =====
+with tab2:
+    st.subheader("📧 メール自動読み取り")
+    st.write("メールから注文画像を自動取得して解析します。")
+    
+    # メール設定
+    with st.expander("📮 メール設定", expanded=True):
+        imap_server = st.text_input("IMAPサーバー", value="imap.gmail.com", help="例: imap.gmail.com, imap.outlook.com")
+        email_address = st.text_input("メールアドレス", help="受信するメールアドレス")
+        email_password = st.text_input("パスワード", type="password", help="メールパスワードまたはアプリパスワード")
+        sender_email = st.text_input("送信者メール（フィルタ）", help="特定の送信者のみ取得する場合（空欄で全て）")
+        days_back = st.number_input("何日前まで遡るか", min_value=1, max_value=30, value=1)
+    
+    if st.button("📬 メールをチェック", type="primary"):
+        if not email_address or not email_password:
+            st.error("メールアドレスとパスワードを入力してください。")
+        else:
+            try:
+                from email_reader import check_email_for_orders
+                
+                with st.spinner('メールをチェック中...'):
+                    results = check_email_for_orders(
+                        imap_server=imap_server,
+                        email_address=email_address,
+                        password=email_password,
+                        sender_email=sender_email if sender_email else None,
+                        days_back=days_back
+                    )
+                
+                if results:
+                    st.success(f"✅ {len(results)}件のメールから画像を取得しました")
+                    
+                    for idx, result in enumerate(results):
+                        with st.expander(f"📎 {result['filename']} - {result['subject']} ({result['date']})"):
+                            st.image(result['image'], caption=result['filename'], use_container_width=True)
+                            
+                            if st.button(f"🔍 この画像を解析", key=f"parse_{idx}"):
+                                with st.spinner('解析中...'):
+                                    order_data = get_order_data(result['image'])
+                                    if order_data:
+                                        validated_data = validate_and_fix_order_data(order_data)
+                                        st.session_state.order_data = order_data
+                                        st.session_state.validated_data = validated_data
+                                        st.success(f"✅ {len(validated_data)}件のデータを読み取りました")
+                                        st.rerun()
+                else:
+                    st.info("新しいメールは見つかりませんでした。")
+            
+            except Exception as e:
+                st.error(f"メールチェックエラー: {e}")
+                with st.expander("🔍 詳細なエラー情報"):
+                    st.code(traceback.format_exc(), language="python")
+                st.info("💡 解決方法: IMAPサーバー設定、メールアドレス、パスワードを確認してください。Gmailの場合はアプリパスワードを使用してください。")
+
+# ===== タブ3: 設定管理 =====
+with tab3:
+    st.subheader("⚙️ 設定管理")
+    st.write("店舗名と品目名を動的に管理できます。")
+    
+    # 店舗名管理
+    st.subheader("🏪 店舗名管理")
+    stores = load_stores()
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        new_store = st.text_input("新しい店舗名を追加", placeholder="例: 新店舗", key="new_store_input")
+    with col2:
+        if st.button("追加", key="add_store"):
+            if new_store and new_store.strip():
+                if add_store(new_store.strip()):
+                    st.success(f"✅ 「{new_store.strip()}」を追加しました")
+                    st.rerun()
+                else:
+                    st.warning("既に存在する店舗名です")
+    
+    # 店舗名一覧（編集・削除可能）
+    if stores:
+        st.write("**登録済み店舗名:**")
+        for store in stores:
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.write(f"- {store}")
+            with col2:
+                if st.button("削除", key=f"del_store_{store}"):
+                    if remove_store(store):
+                        st.success(f"✅ 「{store}」を削除しました")
+                        st.rerun()
+    
+    st.divider()
+    
+    # 品目名管理
+    st.subheader("🥬 品目名管理")
+    items = load_items()
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        new_item = st.text_input("新しい品目名を追加", placeholder="例: 新野菜", key="new_item_input")
+    with col2:
+        if st.button("追加", key="add_item"):
+            if new_item and new_item.strip():
+                if add_new_item(new_item.strip()):
+                    st.success(f"✅ 「{new_item.strip()}」を追加しました")
+                    st.rerun()
+                else:
+                    st.warning("既に存在する品目名です")
+    
+    # 品目名一覧（編集・削除可能）
+    if items:
+        st.write("**登録済み品目名:**")
+        for normalized, variants in items.items():
+            with st.expander(f"📦 {normalized} (バリアント: {', '.join(variants)})"):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    new_variant = st.text_input(f"「{normalized}」の新しい表記を追加", key=f"variant_{normalized}", placeholder="例: 別表記")
+                with col2:
+                    if st.button("追加", key=f"add_variant_{normalized}"):
+                        if new_variant and new_variant.strip():
+                            add_item_variant(normalized, new_variant.strip())
+                            st.success(f"✅ 「{new_variant.strip()}」を追加しました")
+                            st.rerun()
+                
+                if st.button("削除", key=f"del_item_{normalized}"):
+                    if remove_item(normalized):
+                        st.success(f"✅ 「{normalized}」を削除しました")
+                        st.rerun()
