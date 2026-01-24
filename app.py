@@ -10,6 +10,12 @@ from collections import defaultdict
 import io
 import pandas as pd
 import traceback
+import pytesseract
+from config_manager import (
+    load_stores, save_stores, add_store, remove_store,
+    load_items, save_items, add_item_variant, add_new_item, remove_item,
+    auto_learn_store, auto_learn_item
+)
 
 # 1. 初期設定
 st.set_page_config(page_title="配送管理システム", layout="centered")
@@ -77,11 +83,17 @@ def validate_store_name(store_name, auto_learn=True):
 def extract_text_with_ocr(image):
     """OCRを使用して画像からテキストを抽出"""
     try:
+        # pytesseractが利用可能かチェック
+        if 'pytesseract' not in globals():
+            return None
         # pytesseractの設定（日本語対応）
         text = pytesseract.image_to_string(image, lang='jpn')
         return text.strip()
+    except NameError:
+        # pytesseractがインポートされていない場合
+        return None
     except Exception as e:
-        st.warning(f"OCRエラー: {e}")
+        # その他のOCRエラー（Tesseractがインストールされていない等）
         return None
 
 # 6. AIテキスト解析（OCR結果を解析、トークン節約）
@@ -243,26 +255,31 @@ def get_order_data_from_image(image, max_retries=3):
 def get_order_data(image, use_ocr=True, max_retries=3):
     """OCR + AIハイブリッド解析（トークン節約）"""
     if use_ocr:
-        # まずOCRでテキスト抽出を試みる
-        with st.spinner('OCRでテキスト抽出中...'):
-            ocr_text = extract_text_with_ocr(image)
-        
-        if ocr_text and len(ocr_text.strip()) > 10:  # 十分なテキストが抽出できた場合
-            st.info(f"✅ OCRでテキスト抽出成功（{len(ocr_text)}文字）")
-            with st.expander("📄 OCR抽出テキストを確認"):
-                st.text(ocr_text)
+        try:
+            # まずOCRでテキスト抽出を試みる
+            with st.spinner('OCRでテキスト抽出中...'):
+                ocr_text = extract_text_with_ocr(image)
             
-            # OCR結果をAIで解析（テキストのみなのでトークン消費が少ない）
-            with st.spinner('AIがテキストを解析中...'):
-                order_data = get_order_data_from_text(ocr_text, max_retries)
-            
-            if order_data:
-                return order_data
+            if ocr_text and len(ocr_text.strip()) > 10:  # 十分なテキストが抽出できた場合
+                st.info(f"✅ OCRでテキスト抽出成功（{len(ocr_text)}文字）")
+                with st.expander("📄 OCR抽出テキストを確認"):
+                    st.text(ocr_text)
+                
+                # OCR結果をAIで解析（テキストのみなのでトークン消費が少ない）
+                with st.spinner('AIがテキストを解析中...'):
+                    order_data = get_order_data_from_text(ocr_text, max_retries)
+                
+                if order_data:
+                    return order_data
+                else:
+                    st.warning("⚠️ OCRテキストの解析に失敗。画像解析に切り替えます...")
             else:
-                st.warning("⚠️ OCRテキストの解析に失敗。画像解析に切り替えます...")
-        
-        else:
-            st.warning("⚠️ OCRで十分なテキストが抽出できませんでした。画像解析に切り替えます...")
+                # OCRが利用できない、または十分なテキストが抽出できなかった場合
+                # 警告を出さずに静かに画像解析に切り替え
+                pass
+        except Exception:
+            # OCR関連のエラーは無視して画像解析にフォールバック
+            pass
     
     # OCRが失敗した場合、またはuse_ocr=Falseの場合、画像解析にフォールバック
     with st.spinner('AIが画像を直接解析中...'):
