@@ -394,7 +394,7 @@ def create_b5_pdf(data):
     pdf.cell(45, 12, " 品目", border=1, fill=True)
     pdf.cell(20, 12, " フル箱", border=1, fill=True, align='C')
     pdf.cell(20, 12, " 端数箱", border=1, fill=True, align='C')
-    pdf.cell(30, 12, " パック数", border=1, fill=True, align='C', ln=True)
+    pdf.cell(30, 12, " TOTALパック数", border=1, fill=True, align='C', ln=True)
     
     # テーブル内容
     pdf.set_font(font_name, style='B', size=14)
