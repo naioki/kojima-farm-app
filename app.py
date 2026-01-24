@@ -131,8 +131,17 @@ def get_order_data_from_text(text, max_retries=3):
 - 青梗菜: 20袋/箱 → unit=20
 - 長ネギ(2本P): 30本/箱 → unit=30
 
+【重要：総数（パック数）の表記について】
+- 「x180」「×180」「180パック」などの表記は「総数（パック数）180」を意味します
+- この場合、unit（1箱あたりの入数）とboxes（箱数）を逆算してください
+- 例：「胡瓜3本 x180」→ 総数180パック = unit=30の場合、boxes=6, remainder=0 (30×6=180)
+- 例：「春菊 x50」→ 総数50パック = unit=30の場合、boxes=1, remainder=20 (30×1+20=50)
+- 総数がunitで割り切れる場合：boxes=総数÷unit, remainder=0
+- 総数がunitで割り切れない場合：boxes=総数÷unit（切り捨て）, remainder=総数-(unit×boxes)
+
 【数量計算の例】
-- 「胡瓜3本×100」→ unit=30, boxes=10, remainder=0 (30本/箱 × 10箱 = 300本 = 3本×100)
+- 「胡瓜3本×100」→ unit=30, boxes=3, remainder=10 (30本/箱 × 3箱 + 10本 = 100本)
+- 「胡瓜3本 x180」→ unit=30, boxes=6, remainder=0 (30本/箱 × 6箱 = 180本)
 - 「胡瓜バラ100×7 / 50×1」→ unit=100, boxes=7, remainder=50 (100本/箱 × 7箱 + 50本 = 750本)
 - 「春菊×50」→ unit=30, boxes=1, remainder=20 (30袋/箱 × 1箱 + 20袋 = 50袋)
 
@@ -337,6 +346,13 @@ def validate_and_fix_order_data(order_data, auto_learn=True):
         # 数量が0の場合は警告
         if unit == 0 and boxes == 0 and remainder == 0:
             errors.append(f"行{i+1}: 数量が全て0です（店舗: {store}, 品目: {item}）")
+        
+        # 計算の整合性チェック（unitが0でない場合のみ）
+        if unit > 0:
+            calculated_total = (unit * boxes) + remainder
+            # もしboxesとremainderが0で、unitだけが設定されている場合は警告
+            if boxes == 0 and remainder == 0 and unit > 0:
+                errors.append(f"行{i+1}: unitは設定されていますが、boxesとremainderが0です（店舗: {store}, 品目: {item}）")
         
         # 検証済みデータを追加
         spec_value = entry.get('spec', '')
