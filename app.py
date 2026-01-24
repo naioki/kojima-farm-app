@@ -339,10 +339,16 @@ def validate_and_fix_order_data(order_data, auto_learn=True):
             errors.append(f"行{i+1}: 数量が全て0です（店舗: {store}, 品目: {item}）")
         
         # 検証済みデータを追加
+        spec_value = entry.get('spec', '')
+        if spec_value is None:
+            spec_value = ''
+        else:
+            spec_value = str(spec_value).strip()
+        
         validated_entry = {
             'store': validated_store or store,
             'item': normalized_item or item,
-            'spec': entry.get('spec', '').strip(),
+            'spec': spec_value,
             'unit': unit,
             'boxes': boxes,
             'remainder': remainder
@@ -598,10 +604,20 @@ with tab1:
                     # 店舗名の検証
                     validated_store = validate_store_name(row['店舗名']) or row['店舗名']
                     
+                    # 規格の処理（NaNやNoneに対応）
+                    try:
+                        spec_value = row['規格']
+                        if pd.isna(spec_value) or spec_value is None:
+                            spec_value = ''
+                        else:
+                            spec_value = str(spec_value).strip()
+                    except (KeyError, TypeError):
+                        spec_value = ''
+                    
                     updated_data.append({
                         'store': validated_store,
                         'item': normalized_item,
-                        'spec': str(row['規格']).strip(),
+                        'spec': spec_value,
                         'unit': int(row['入数(unit)']),
                         'boxes': int(row['箱数(boxes)']),
                         'remainder': int(row['端数(remainder)'])
