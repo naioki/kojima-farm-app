@@ -390,20 +390,25 @@ def create_b5_pdf(data):
     # テーブルヘッダー
     pdf.set_font(font_name, style='B', size=12)
     pdf.set_fill_color(230, 230, 230)
-    pdf.cell(55, 12, " 店舗名", border=1, fill=True)
-    pdf.cell(55, 12, " 品目", border=1, fill=True)
-    pdf.cell(25, 12, " フル箱", border=1, fill=True, align='C')
-    pdf.cell(25, 12, " 端数箱", border=1, fill=True, align='C', ln=True)
+    pdf.cell(45, 12, " 店舗名", border=1, fill=True)
+    pdf.cell(45, 12, " 品目", border=1, fill=True)
+    pdf.cell(20, 12, " フル箱", border=1, fill=True, align='C')
+    pdf.cell(20, 12, " 端数箱", border=1, fill=True, align='C')
+    pdf.cell(30, 12, " パック数", border=1, fill=True, align='C', ln=True)
     
     # テーブル内容
     pdf.set_font(font_name, style='B', size=14)
     for entry in data:
+        b_val = safe_int(entry.get('boxes', 0))
         r_val = safe_int(entry.get('remainder', 0))
         rem_box = 1 if r_val > 0 else 0
-        pdf.cell(55, 12, f" {entry.get('store','')}", border=1)
-        pdf.cell(55, 12, f" {entry.get('item','')}", border=1)
-        pdf.cell(25, 12, f" {entry.get('boxes',0)}", border=1, align='C')
-        pdf.cell(25, 12, f" {rem_box}", border=1, align='C', ln=True)
+        total_packs = b_val + rem_box  # フル箱 + 端数箱 = パック数
+        
+        pdf.cell(45, 12, f" {entry.get('store','')}", border=1)
+        pdf.cell(45, 12, f" {entry.get('item','')}", border=1)
+        pdf.cell(20, 12, f" {b_val}", border=1, align='C')
+        pdf.cell(20, 12, f" {rem_box}", border=1, align='C')
+        pdf.cell(30, 12, f" {total_packs}", border=1, align='C', ln=True)
 
     # --- 2ページ目以降：個別伝票 ---
     for entry in data:
@@ -604,6 +609,30 @@ with tab1:
                 
                 st.session_state.validated_data = updated_data
                 st.info("✅ データを更新しました。PDFを生成する場合は下のボタンを押してください。")
+            
+            # 品目別の総数を表示
+            st.divider()
+            st.subheader("📊 品目別総数")
+            
+            # 品目ごとに集計
+            item_totals = defaultdict(int)
+            for entry in st.session_state.validated_data:
+                item = entry.get('item', '不明')
+                total = (safe_int(entry.get('unit', 0)) * safe_int(entry.get('boxes', 0))) + safe_int(entry.get('remainder', 0))
+                item_totals[item] += total
+            
+            # 品目別総数をテーブル形式で表示
+            summary_data = []
+            for item, total in sorted(item_totals.items()):
+                unit_label = "袋" if any(x in item for x in ["春菊", "青梗菜"]) else "パック"
+                summary_data.append({
+                    '品目': item,
+                    '総数': f"{total}{unit_label}"
+                })
+            
+            if summary_data:
+                summary_df = pd.DataFrame(summary_data)
+                st.dataframe(summary_df, use_container_width=True, hide_index=True)
             
             st.divider()
             
