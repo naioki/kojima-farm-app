@@ -660,12 +660,50 @@ with tab1:
                         summary_packs = defaultdict(int)
                         for entry in final_data:
                             total = (safe_int(entry.get('unit',0)) * safe_int(entry.get('boxes',0))) + safe_int(entry.get('remainder',0))
-                            summary_packs[entry.get('item','不明')] += total
+                            # キーをitemとspecの組み合わせにする（胡瓜の3本Pとバラを別物として扱う）
+                            item = entry.get('item', '不明')
+                            spec = entry.get('spec', '').strip()
+                            key = (item, spec)  # タプルをキーとして使用
+                            summary_packs[key] += total
+                        
+                        # 単位判定関数
+                        def get_unit_label(item, spec):
+                            """品目名と規格から単位を判定"""
+                            spec_lower = spec.lower() if spec else ""
+                            item_lower = item.lower() if item else ""
+                            
+                            # 胡瓜の判定
+                            if "胡瓜" in item or "きゅうり" in item_lower:
+                                if "バラ" in spec or "ばら" in spec_lower:
+                                    return "本"
+                                elif "3本" in spec or "3本p" in spec_lower or "3本パック" in spec_lower:
+                                    return "パック"
+                                else:
+                                    # デフォルトはパック（3本Pと判断）
+                                    return "パック"
+                            
+                            # 春菊・青梗菜
+                            if "春菊" in item or "青梗菜" in item or "チンゲン菜" in item:
+                                return "袋"
+                            
+                            # 長ネギ
+                            if "長ネギ" in item or "長ねぎ" in item_lower or "ネギ" in item:
+                                return "パック"
+                            
+                            # デフォルト
+                            return "パック"
                         
                         line_text = f"【{datetime.now().strftime('%m/%d')} 出荷・作成総数】\n"
-                        for item, total in summary_packs.items():
-                            unit_label = "袋" if any(x in item for x in ["春菊", "青梗菜"]) else "パック"
-                            line_text += f"・{item}：{total}{unit_label}\n"
+                        # キーをソートして表示（品目名→規格の順）
+                        sorted_items = sorted(summary_packs.items(), key=lambda x: (x[0][0], x[0][1]))
+                        for (item, spec), total in sorted_items:
+                            unit_label = get_unit_label(item, spec)
+                            # 表示形式: 品目名(規格)：数量単位
+                            if spec:
+                                display_name = f"{item}({spec})"
+                            else:
+                                display_name = item
+                            line_text += f"・{display_name}：{total}{unit_label}\n"
                         
                         st.code(line_text, language="text")
                         st.write("↑ タップしてコピーし、LINEに貼り付けてください。")
