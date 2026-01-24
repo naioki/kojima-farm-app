@@ -104,6 +104,13 @@ Streamlit Cloudを使用する場合、Secretsに以下を設定：
 ```toml
 COMPANY_NAME = "(株)アイプラス"
 GEMINI_API_KEY = "your-api-key-here"
+
+# メール設定（オプション - 入力の手間を減らすため）
+[email]
+imap_server = "imap.gmail.com"
+email_address = "your-email@gmail.com"
+sender_email = "terasaki@example.com"  # 寺崎さんのメールアドレス
+days_back = 1
 ```
 
 ローカルで実行する場合、`.streamlit/secrets.toml`を作成：
@@ -111,7 +118,16 @@ GEMINI_API_KEY = "your-api-key-here"
 ```toml
 COMPANY_NAME = "(株)アイプラス"
 GEMINI_API_KEY = "your-api-key-here"
+
+# メール設定（オプション）
+[email]
+imap_server = "imap.gmail.com"
+email_address = "your-email@gmail.com"
+sender_email = "terasaki@example.com"
+days_back = 1
 ```
+
+**注意**: メール設定はオプションです。設定しない場合は、アプリ内で毎回入力できます。設定すると、メールアドレスとIMAPサーバーが自動入力され、パスワードのみ入力すればOKです。
 
 ### 実行
 

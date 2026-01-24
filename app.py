@@ -16,6 +16,7 @@ from config_manager import (
     load_items, save_items, add_item_variant, add_new_item, remove_item,
     auto_learn_store, auto_learn_item
 )
+from email_config_manager import load_email_config, save_email_config, detect_imap_server
 
 # 1. 初期設定
 st.set_page_config(page_title="配送管理システム", layout="centered")
@@ -468,6 +469,10 @@ if 'validated_data' not in st.session_state:
     st.session_state.validated_data = None
 if 'image_uploaded' not in st.session_state:
     st.session_state.image_uploaded = None
+if 'email_config' not in st.session_state:
+    st.session_state.email_config = load_email_config(st.secrets)
+if 'email_password' not in st.session_state:
+    st.session_state.email_password = ""
 
 # ===== タブ1: 画像解析 =====
 with tab1:
@@ -646,54 +651,161 @@ with tab2:
     st.subheader("📧 メール自動読み取り")
     st.write("メールから注文画像を自動取得して解析します。")
     
-    # メール設定
-    with st.expander("📮 メール設定", expanded=True):
-        imap_server = st.text_input("IMAPサーバー", value="imap.gmail.com", help="例: imap.gmail.com, imap.outlook.com")
-        email_address = st.text_input("メールアドレス", help="受信するメールアドレス")
-        email_password = st.text_input("パスワード", type="password", help="メールパスワードまたはアプリパスワード")
-        sender_email = st.text_input("送信者メール（フィルタ）", help="特定の送信者のみ取得する場合（空欄で全て）")
-        days_back = st.number_input("何日前まで遡るか", min_value=1, max_value=30, value=1)
+    # 保存された設定を読み込み（Secrets優先、次にファイル、最後にセッション状態）
+    saved_config = st.session_state.email_config
     
-    if st.button("📬 メールをチェック", type="primary"):
-        if not email_address or not email_password:
-            st.error("メールアドレスとパスワードを入力してください。")
-        else:
-            try:
-                from email_reader import check_email_for_orders
-                
-                with st.spinner('メールをチェック中...'):
-                    results = check_email_for_orders(
-                        imap_server=imap_server,
-                        email_address=email_address,
-                        password=email_password,
-                        sender_email=sender_email if sender_email else None,
-                        days_back=days_back
-                    )
-                
-                if results:
-                    st.success(f"✅ {len(results)}件のメールから画像を取得しました")
-                    
-                    for idx, result in enumerate(results):
-                        with st.expander(f"📎 {result['filename']} - {result['subject']} ({result['date']})"):
-                            st.image(result['image'], caption=result['filename'], use_container_width=True)
-                            
-                            if st.button(f"🔍 この画像を解析", key=f"parse_{idx}"):
-                                with st.spinner('解析中...'):
-                                    order_data = get_order_data(result['image'])
-                                    if order_data:
-                                        validated_data = validate_and_fix_order_data(order_data)
-                                        st.session_state.order_data = order_data
-                                        st.session_state.validated_data = validated_data
-                                        st.success(f"✅ {len(validated_data)}件のデータを読み取りました")
-                                        st.rerun()
+    # Streamlit Secretsから設定を読み込む（最優先）
+    try:
+        secrets_email = st.secrets.get("email", {})
+        if secrets_email and secrets_email.get("email_address"):
+            saved_config = {
+                "imap_server": secrets_email.get("imap_server", detect_imap_server(secrets_email.get("email_address", ""))),
+                "email_address": secrets_email.get("email_address", ""),
+                "sender_email": secrets_email.get("sender_email", ""),
+                "days_back": secrets_email.get("days_back", 1)
+            }
+            st.session_state.email_config = saved_config
+            st.info("💡 Streamlit Secretsから設定を読み込みました")
+    except:
+        pass
+    
+    # メール設定
+    with st.expander("📮 メール設定", expanded=False):
+        # IMAPサーバー（自動判定）
+        default_imap = saved_config.get("imap_server", "")
+        if not default_imap and saved_config.get("email_address"):
+            default_imap = detect_imap_server(saved_config.get("email_address", ""))
+        if not default_imap:
+            default_imap = "imap.gmail.com"
+        
+        imap_server = st.text_input(
+            "IMAPサーバー", 
+            value=default_imap, 
+            help="例: imap.gmail.com, imap.outlook.com（メールアドレスから自動判定されます）"
+        )
+        
+        # メールアドレス（入力時にIMAPサーバーを自動判定）
+        email_address = st.text_input(
+            "メールアドレス", 
+            value=saved_config.get("email_address", ""),
+            help="受信するメールアドレス（入力するとIMAPサーバーを自動判定します）",
+            key="email_addr_input",
+            on_change=None
+        )
+        
+        # メールアドレスが変更されたらIMAPサーバーを自動更新
+        if email_address and "@" in email_address:
+            auto_detected = detect_imap_server(email_address)
+            if auto_detected != default_imap:
+                # セッション状態に保存して次回自動入力
+                if 'auto_imap_server' not in st.session_state or st.session_state.auto_imap_server != auto_detected:
+                    st.session_state.auto_imap_server = auto_detected
+                    st.info(f"💡 IMAPサーバーを自動判定: {auto_detected}")
+                    # 自動更新されたIMAPサーバーを使用
+                    imap_server = auto_detected
                 else:
-                    st.info("新しいメールは見つかりませんでした。")
-            
-            except Exception as e:
-                st.error(f"メールチェックエラー: {e}")
-                with st.expander("🔍 詳細なエラー情報"):
-                    st.code(traceback.format_exc(), language="python")
-                st.info("💡 解決方法: IMAPサーバー設定、メールアドレス、パスワードを確認してください。Gmailの場合はアプリパスワードを使用してください。")
+                    imap_server = st.session_state.auto_imap_server
+            else:
+                imap_server = default_imap
+        else:
+            imap_server = default_imap
+        
+        # パスワード（セッション状態に保存、ファイルには保存しない）
+        email_password = st.text_input(
+            "パスワード", 
+            type="password", 
+            value=st.session_state.email_password,
+            help="メールパスワードまたはアプリパスワード（このセッション中のみ保存）",
+            key="email_pass_input"
+        )
+        st.session_state.email_password = email_password
+        
+        # 送信者フィルタ
+        sender_email = st.text_input(
+            "送信者メール（フィルタ）", 
+            value=saved_config.get("sender_email", ""),
+            help="特定の送信者のみ取得する場合（空欄で全て）"
+        )
+        
+        # 何日前まで遡るか
+        days_back = st.number_input(
+            "何日前まで遡るか", 
+            min_value=1, 
+            max_value=30, 
+            value=saved_config.get("days_back", 1)
+        )
+        
+        # 設定を保存するか（オプション）
+        save_settings = st.checkbox(
+            "設定を保存（メールアドレス、IMAPサーバー、送信者フィルタのみ。パスワードは保存されません）",
+            value=False,
+            help="チェックすると、次回起動時に設定が自動入力されます（パスワードは除く）"
+        )
+        
+        if save_settings:
+            save_email_config(imap_server, email_address, sender_email, days_back, save_to_file=True)
+            st.session_state.email_config = {
+                "imap_server": imap_server,
+                "email_address": email_address,
+                "sender_email": sender_email,
+                "days_back": days_back
+            }
+            st.success("✅ 設定を保存しました（パスワードは保存されません）")
+    
+    # ワンクリックでメールチェック（設定が保存されている場合）
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        if st.button("📬 メールをチェック", type="primary", use_container_width=True):
+            if not email_address or not email_password:
+                st.error("メールアドレスとパスワードを入力してください。")
+            else:
+                try:
+                    from email_reader import check_email_for_orders
+                    
+                    with st.spinner('メールをチェック中...'):
+                        results = check_email_for_orders(
+                            imap_server=imap_server,
+                            email_address=email_address,
+                            password=email_password,
+                            sender_email=sender_email if sender_email else None,
+                            days_back=days_back
+                        )
+                    
+                    if results:
+                        st.success(f"✅ {len(results)}件のメールから画像を取得しました")
+                        
+                        for idx, result in enumerate(results):
+                            with st.expander(f"📎 {result['filename']} - {result['subject']} ({result['date']})"):
+                                st.image(result['image'], caption=result['filename'], use_container_width=True)
+                                
+                                if st.button(f"🔍 この画像を解析", key=f"parse_{idx}"):
+                                    with st.spinner('解析中...'):
+                                        order_data = get_order_data(result['image'])
+                                        if order_data:
+                                            validated_data = validate_and_fix_order_data(order_data)
+                                            st.session_state.order_data = order_data
+                                            st.session_state.validated_data = validated_data
+                                            st.success(f"✅ {len(validated_data)}件のデータを読み取りました")
+                                            st.rerun()
+                    else:
+                        st.info("新しいメールは見つかりませんでした。")
+                
+                except Exception as e:
+                    st.error(f"メールチェックエラー: {e}")
+                    with st.expander("🔍 詳細なエラー情報"):
+                        st.code(traceback.format_exc(), language="python")
+                    st.info("💡 解決方法: IMAPサーバー設定、メールアドレス、パスワードを確認してください。Gmailの場合はアプリパスワードを使用してください。")
+    
+    with col2:
+        # 設定をリセット
+        if st.button("🔄 設定をリセット", use_container_width=True, help="入力内容をクリア"):
+            st.session_state.email_password = ""
+            st.rerun()
+    
+    # 設定が保存されている場合の表示
+    if saved_config.get("email_address"):
+        st.success(f"💾 設定が保存されています: **{saved_config.get('email_address')}** ({saved_config.get('imap_server', '自動判定')}) - パスワードのみ入力してください")
 
 # ===== タブ3: 設定管理 =====
 with tab3:
