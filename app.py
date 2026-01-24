@@ -206,52 +206,6 @@ def get_order_data_from_image(image, max_retries=3):
 [{{"store":"店舗名","item":"品目名","spec":"規格","unit":数字,"boxes":数字,"remainder":数字}}]
 
 必ず全ての店舗と品目を漏れなく読み取ってください。"""
-
-【重要ルール】
-1. 店舗名の後に「:」または改行がある場合、その後の行は全てその店舗の注文です
-2. 品目名がない行（例：「50×1」）は、直前の品目の続きとして処理してください
-3. 「/」で区切られた複数の注文は、同じ店舗・同じ品目として統合してください
-   - 例：「胡瓜バラ100×7 / 50×1」→ 胡瓜バラ100本×7箱 + 端数50本
-4. 「胡瓜バラ」と「胡瓜3本」は別の規格として扱ってください
-5. unit, boxes, remainderには「数字のみ」を入れてください
-
-【品目名の正規化】
-- 「青梗菜」「チンゲン菜」「ちんげん菜」→「青梗菜」
-- 「胡瓜」「きゅうり」「キュウリ」→「胡瓜」
-- 「長ネギ」「ネギ」「ねぎ」→「長ネギ」
-- 「春菊」「しゅんぎく」→「春菊」
-
-【計算ルール】
-- 胡瓜(3本P): 30本/箱 → unit=30
-- 胡瓜(バラ): 100本/箱（50本以上なら50本箱1、未満はバラ）→ unit=100
-- 春菊: 30袋/箱 → unit=30
-- 青梗菜: 20袋/箱 → unit=20
-- 長ネギ(2本P): 30本/箱 → unit=30
-
-【数量計算の例】
-- 「胡瓜3本×100」→ unit=30, boxes=10, remainder=0 (30本/箱 × 10箱 = 300本 = 3本×100)
-- 「胡瓜バラ100×7 / 50×1」→ unit=100, boxes=7, remainder=50 (100本/箱 × 7箱 + 50本 = 750本)
-- 「春菊×50」→ unit=30, boxes=1, remainder=20 (30袋/箱 × 1箱 + 20袋 = 50袋)
-
-【出力JSON形式】
-[{"store":"店舗名","item":"品目名","spec":"規格","unit":数字,"boxes":数字,"remainder":数字}]
-
-【具体例1】
-入力: 「青葉台: 胡瓜バラ100×7 / 50×1 春菊×50 青梗菜×20」
-出力: [
-  {"store":"青葉台","item":"胡瓜","spec":"バラ","unit":100,"boxes":7,"remainder":50},
-  {"store":"青葉台","item":"春菊","spec":"","unit":30,"boxes":1,"remainder":20},
-  {"store":"青葉台","item":"青梗菜","spec":"","unit":20,"boxes":1,"remainder":0}
-]
-
-【具体例2】
-入力: 「八柱: 胡瓜3本×180 ネギ2本×80」
-出力: [
-  {"store":"八柱","item":"胡瓜","spec":"3本P","unit":30,"boxes":18,"remainder":0},
-  {"store":"八柱","item":"長ネギ","spec":"2本P","unit":30,"boxes":5,"remainder":10}
-]
-
-必ず全ての店舗と品目を漏れなく読み取ってください。"""
     
     for attempt in range(max_retries):
         try:
@@ -536,99 +490,99 @@ with tab1:
         
         # 結果確認・編集画面
         if st.session_state.validated_data:
-        st.divider()
-        st.subheader("📝 解析結果の確認・編集")
-        st.write("以下のテーブルでデータを確認・編集できます。編集後は「PDFを生成」ボタンを押してください。")
-        
-        # 編集可能なデータフレームの準備
-        df_data = []
-        for entry in st.session_state.validated_data:
-            df_data.append({
-                '店舗名': entry.get('store', ''),
-                '品目': entry.get('item', ''),
-                '規格': entry.get('spec', ''),
-                '入数(unit)': entry.get('unit', 0),
-                '箱数(boxes)': entry.get('boxes', 0),
-                '端数(remainder)': entry.get('remainder', 0),
-                '合計数量': (entry.get('unit', 0) * entry.get('boxes', 0)) + entry.get('remainder', 0)
-            })
-        
-        df = pd.DataFrame(df_data)
-        
-        # データエディタ
-        edited_df = st.data_editor(
-            df,
-            use_container_width=True,
-            num_rows="dynamic",
-            column_config={
-                '店舗名': st.column_config.SelectboxColumn(
-                    '店舗名',
-                    help='店舗名を選択してください',
-                    options=get_known_stores(),
-                    required=True
-                ),
-                '品目': st.column_config.TextColumn(
-                    '品目',
-                    help='品目名を入力してください',
-                    required=True
-                ),
-                '規格': st.column_config.TextColumn(
-                    '規格',
-                    help='規格を入力してください（例: 3本P、バラ）'
-                ),
-                '入数(unit)': st.column_config.NumberColumn(
-                    '入数(unit)',
-                    help='1箱あたりの入数',
-                    min_value=0,
-                    step=1
-                ),
-                '箱数(boxes)': st.column_config.NumberColumn(
-                    '箱数(boxes)',
-                    help='フル箱の数',
-                    min_value=0,
-                    step=1
-                ),
-                '端数(remainder)': st.column_config.NumberColumn(
-                    '端数(remainder)',
-                    help='端数の数量',
-                    min_value=0,
-                    step=1
-                ),
-                '合計数量': st.column_config.NumberColumn(
-                    '合計数量',
-                    help='自動計算: 入数×箱数+端数',
-                    disabled=True
-                )
-            }
-        )
-        
-        # 編集後のデータを更新（合計数量を再計算）
-        edited_df['合計数量'] = edited_df['入数(unit)'] * edited_df['箱数(boxes)'] + edited_df['端数(remainder)']
-        
-        # データが変更されたかチェック（合計数量の列を除く）
-        df_for_compare = df.drop(columns=['合計数量'])
-        edited_df_for_compare = edited_df.drop(columns=['合計数量'])
-        
-        if not df_for_compare.equals(edited_df_for_compare):
-            updated_data = []
-            for _, row in edited_df.iterrows():
-                # 品目名の正規化
-                normalized_item = normalize_item_name(row['品目'])
-                # 店舗名の検証
-                validated_store = validate_store_name(row['店舗名']) or row['店舗名']
-                
-                updated_data.append({
-                    'store': validated_store,
-                    'item': normalized_item,
-                    'spec': str(row['規格']).strip(),
-                    'unit': int(row['入数(unit)']),
-                    'boxes': int(row['箱数(boxes)']),
-                    'remainder': int(row['端数(remainder)'])
+            st.divider()
+            st.subheader("📝 解析結果の確認・編集")
+            st.write("以下のテーブルでデータを確認・編集できます。編集後は「PDFを生成」ボタンを押してください。")
+            
+            # 編集可能なデータフレームの準備
+            df_data = []
+            for entry in st.session_state.validated_data:
+                df_data.append({
+                    '店舗名': entry.get('store', ''),
+                    '品目': entry.get('item', ''),
+                    '規格': entry.get('spec', ''),
+                    '入数(unit)': entry.get('unit', 0),
+                    '箱数(boxes)': entry.get('boxes', 0),
+                    '端数(remainder)': entry.get('remainder', 0),
+                    '合計数量': (entry.get('unit', 0) * entry.get('boxes', 0)) + entry.get('remainder', 0)
                 })
             
-            st.session_state.validated_data = updated_data
-            st.info("✅ データを更新しました。PDFを生成する場合は下のボタンを押してください。")
-        
+            df = pd.DataFrame(df_data)
+            
+            # データエディタ
+            edited_df = st.data_editor(
+                df,
+                use_container_width=True,
+                num_rows="dynamic",
+                column_config={
+                    '店舗名': st.column_config.SelectboxColumn(
+                        '店舗名',
+                        help='店舗名を選択してください',
+                        options=get_known_stores(),
+                        required=True
+                    ),
+                    '品目': st.column_config.TextColumn(
+                        '品目',
+                        help='品目名を入力してください',
+                        required=True
+                    ),
+                    '規格': st.column_config.TextColumn(
+                        '規格',
+                        help='規格を入力してください（例: 3本P、バラ）'
+                    ),
+                    '入数(unit)': st.column_config.NumberColumn(
+                        '入数(unit)',
+                        help='1箱あたりの入数',
+                        min_value=0,
+                        step=1
+                    ),
+                    '箱数(boxes)': st.column_config.NumberColumn(
+                        '箱数(boxes)',
+                        help='フル箱の数',
+                        min_value=0,
+                        step=1
+                    ),
+                    '端数(remainder)': st.column_config.NumberColumn(
+                        '端数(remainder)',
+                        help='端数の数量',
+                        min_value=0,
+                        step=1
+                    ),
+                    '合計数量': st.column_config.NumberColumn(
+                        '合計数量',
+                        help='自動計算: 入数×箱数+端数',
+                        disabled=True
+                    )
+                }
+            )
+            
+            # 編集後のデータを更新（合計数量を再計算）
+            edited_df['合計数量'] = edited_df['入数(unit)'] * edited_df['箱数(boxes)'] + edited_df['端数(remainder)']
+            
+            # データが変更されたかチェック（合計数量の列を除く）
+            df_for_compare = df.drop(columns=['合計数量'])
+            edited_df_for_compare = edited_df.drop(columns=['合計数量'])
+            
+            if not df_for_compare.equals(edited_df_for_compare):
+                updated_data = []
+                for _, row in edited_df.iterrows():
+                    # 品目名の正規化
+                    normalized_item = normalize_item_name(row['品目'])
+                    # 店舗名の検証
+                    validated_store = validate_store_name(row['店舗名']) or row['店舗名']
+                    
+                    updated_data.append({
+                        'store': validated_store,
+                        'item': normalized_item,
+                        'spec': str(row['規格']).strip(),
+                        'unit': int(row['入数(unit)']),
+                        'boxes': int(row['箱数(boxes)']),
+                        'remainder': int(row['端数(remainder)'])
+                    })
+                
+                st.session_state.validated_data = updated_data
+                st.info("✅ データを更新しました。PDFを生成する場合は下のボタンを押してください。")
+            
             st.divider()
             
             # PDF生成ボタン
