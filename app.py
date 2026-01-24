@@ -610,30 +610,6 @@ with tab1:
                 st.session_state.validated_data = updated_data
                 st.info("✅ データを更新しました。PDFを生成する場合は下のボタンを押してください。")
             
-            # 品目別の総数を表示
-            st.divider()
-            st.subheader("📊 品目別総数")
-            
-            # 品目ごとに集計
-            item_totals = defaultdict(int)
-            for entry in st.session_state.validated_data:
-                item = entry.get('item', '不明')
-                total = (safe_int(entry.get('unit', 0)) * safe_int(entry.get('boxes', 0))) + safe_int(entry.get('remainder', 0))
-                item_totals[item] += total
-            
-            # 品目別総数をテーブル形式で表示
-            summary_data = []
-            for item, total in sorted(item_totals.items()):
-                unit_label = "袋" if any(x in item for x in ["春菊", "青梗菜"]) else "パック"
-                summary_data.append({
-                    '品目': item,
-                    '総数': f"{total}{unit_label}"
-                })
-            
-            if summary_data:
-                summary_df = pd.DataFrame(summary_data)
-                st.dataframe(summary_df, use_container_width=True, hide_index=True)
-            
             st.divider()
             
             # PDF生成ボタン
